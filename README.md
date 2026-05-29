@@ -1,5 +1,9 @@
 # blaumilch-agenten
 
-Further details are available here: https://blaumilch.substack.com/
+Offene Werkstatt der **Blaumilch-Agenten**: Skills, Workflows und Prompts zum Mitnehmen. Wächst Stück für Stück.
 
-This is part of https://www.pagebody.ai/
+## Inhalt
+
+- **[prompts/](prompts/)** — *Besser prompten*: die komplette Prompt-Sammlung (Grundausstattung · Frameworks · Techniken). Kostenlos, tool-agnostisch, auf Deutsch.
+
+Mehr: der Newsletter https://blaumilch.substack.com · und https://www.pagebody.ai/
