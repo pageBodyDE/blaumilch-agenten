@@ -1,0 +1,383 @@
+{
+  "name": "AI Chief of Staff — TaskCreator_TEMPLATE",
+  "nodes": [
+    {
+      "id": "wh",
+      "name": "Webhook (test)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "path": "acos-task-creator",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      }
+    },
+    {
+      "id": "ewt",
+      "name": "When Called by Dispatcher",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "norm",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "transcript",
+              "value": "={{ $json.body?.transcript ?? $json.transcript }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "meeting_id",
+              "value": "={{ $json.body?.meeting_id ?? $json.meeting_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "run_id",
+              "value": "={{ $json.body?.run_id ?? $json.run_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "tenant_id",
+              "value": "={{ $json.body?.tenant_id ?? $json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "notion_page_id",
+              "value": "={{ $json.body?.notion_page_id ?? $json.notion_page_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "oai",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        520,
+        420
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "extract",
+      "name": "Extract Tasks",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Heutiges Datum: {{ $now.toFormat('yyyy-MM-dd') }}\n\nMeeting-Transkript:\n\n{{ $json.transcript }}",
+        "options": {
+          "systemMessage": "You extract concrete, actionable to-dos from a meeting transcript for an internal task manager. Return ONLY a JSON array and nothing else: no prose, no explanation, no markdown code fences. Each array element is an object with exactly these keys: \"title\" (a short imperative task, in the same language as the transcript), \"owner\" (the first name of the person responsible if clearly stated in the transcript, otherwise an empty string), \"due_date\" (an ISO date YYYY-MM-DD if a clear deadline is stated or can be derived from the given current date, otherwise an empty string), \"priority\" (exactly one of: High, Medium, Low), \"detail\" (one short sentence of context). Only include real commitments and next steps. If there are no action items, return an empty array []. "
+        }
+      }
+    },
+    {
+      "id": "parse",
+      "name": "Parse Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// === ANPASSEN an deine Notion-Tabelle ===\n// Deine Notion-Datenbank-ID (32 Hex-Zeichen aus der DB-URL).\nconst DB_ID = \"{{REPLACE_ME_NOTION_DB_ID}}\";\n// Map: Vorname (lowercase) -> Notion-User-ID. User-IDs via Notion-API GET /v1/users.\n// Leer lassen ist ok, dann greift immer DEFAULT_OWNER.\nconst OWNER_MAP = {\n  // \"vorname\": \"{{REPLACE_ME_NOTION_USER_ID}}\",\n};\n// Fallback-Owner, wenn kein Name passt (z.B. du selbst).\nconst DEFAULT_OWNER = \"{{REPLACE_ME_DEFAULT_OWNER_USER_ID}}\";\n// HINWEIS: Die Property-Namen unten (\"Activity Title\", \"Status\", ...) muessen\n// EXAKT den Spalten deiner Tabelle entsprechen. Passe sie an.\nconst norm = $('Normalize Input').first().json;\nlet raw = (($('Extract Tasks').first().json.output) ?? '').toString().trim();\nraw = raw.replace(/^```(json)?/i, '').replace(/```$/,'').trim();\nlet tasks = [];\ntry { tasks = JSON.parse(raw); } catch (e) { tasks = []; }\nif (!Array.isArray(tasks)) tasks = [];\nconst pageId = (norm.notion_page_id ?? '').toString().trim();\nconst validRel = /^[0-9a-fA-F]{32}$/.test(pageId.replace(/-/g,''));\nconst items = [];\nfor (const t of tasks) {\n  const title = (t.title ?? '').toString().trim();\n  if (!title) continue;\n  const ownerKey = (t.owner ?? '').toString().trim().toLowerCase();\n  const ownerId = OWNER_MAP[ownerKey] || DEFAULT_OWNER;\n  const priority = ['High','Medium','Low'].includes(t.priority) ? t.priority : 'Medium';\n  const detail = (t.detail ?? '').toString().trim();\n  const due = (t.due_date ?? '').toString().trim();\n  const validDue = /^\\d{4}-\\d{2}-\\d{2}$/.test(due);\n  const props = {\n    \"Activity Title\": { title: [{ text: { content: title } }] },\n    \"Status\": { status: { name: \"Not started\" } },\n    \"Priority\": { select: { name: priority } },\n    \"Owner\": { people: [{ id: ownerId }] }\n  };\n  if (detail) props[\"Action Items\"] = { rich_text: [{ text: { content: detail } }] };\n  if (validDue) props[\"Due Date\"] = { date: { start: due } };\n  if (validRel) props[\"Meeting\"] = { relation: [{ id: pageId }] };\n  items.push({ json: {\n    requestBody: { parent: { database_id: DB_ID }, properties: props },\n    title, owner_id: ownerId, priority, due_date: validDue ? due : \"\",\n    meeting_id: norm.meeting_id, run_id: norm.run_id\n  }});\n}\nreturn items;"
+      }
+    },
+    {
+      "id": "createpage",
+      "name": "Create Task Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1020,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "agg",
+      "name": "Collect Created",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        300
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1460,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-out",
+              "name": "output",
+              "type": "string",
+              "value": "={{ $json.data.length === 0 ? 'Keine Aufgaben aus dem Transkript gefunden.' : ($json.data.length + ' Aufgabe(n) in Notion angelegt: ' + $('Parse Tasks').all().map(i => i.json.title).filter(Boolean).join('; ')) }}"
+            },
+            {
+              "id": "f-model",
+              "name": "model",
+              "type": "string",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "id": "f-count",
+              "name": "task_count",
+              "type": "number",
+              "value": "={{ $json.data.length }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        0
+      ],
+      "parameters": {
+        "content": "## AI Chief of Staff — TaskCreator_TEMPLATE\n\n**Was dieser Sub-Workflow tut.** Wird vom Dispatcher mit `{transcript, meeting_id, run_id, tenant_id, notion_page_id}` aufgerufen, extrahiert mit GPT-4o-mini die Action-Items aus dem Transkript (striktes JSON), legt pro Aufgabe eine Seite in deiner Notion-Tabelle an, gibt `{output, model, task_count}` zurück.\n\n**Was du einsetzen musst:** OpenAI-Credential im `OpenAI Chat Model`-Node, Notion-Credential (`Notion API`, interne Integration mit Insert/Update + Read-User-Info) im `Create Task Page`-Node, und im `Parse Tasks`-Node die `{{REPLACE_ME_...}}`-Werte (DB-ID, Owner-Map, Default-Owner) + die Property-Namen deiner Tabelle.\n\n**Wichtig:** Der `Webhook (test)`-Trigger ist Absicht (hält den Sub-Workflow aktiv). **Dispatcher-Verkabelung:** siehe SETUP_CHECKLIST. Der Dispatcher muss `notion_page_id` mitreichen, damit jede Aufgabe aufs Meeting verlinkt.",
+        "height": 160,
+        "width": 1520,
+        "color": 6
+      }
+    },
+    {
+      "id": "sticky-trigger",
+      "name": "Entry Points",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        560
+      ],
+      "parameters": {
+        "content": "## Entry Points\n**When Called by Dispatcher**: der echte Eingang.\n\n**Webhook (test)**: nur Hilfs-Trigger, damit n8n den Workflow aktiv hält. Nicht weiter verkabelt.",
+        "height": 170,
+        "width": 240,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-llm",
+      "name": "LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        440,
+        560
+      ],
+      "parameters": {
+        "content": "## LLM\n**OpenAI Chat Model** liefert das LLM (gpt-4o-mini, wechselbar). **Extract Tasks** ist der LangChain Agent: gibt ein striktes JSON-Array `[{title, owner, due_date, priority, detail}]` zurück, sonst nichts.",
+        "height": 170,
+        "width": 300,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-parse",
+      "name": "Parse + Notion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        560
+      ],
+      "parameters": {
+        "content": "## Parse + Notion\n**Parse Tasks** ist die **einzige Code-Node** in diesem Workflow. Sie baut pro Aufgabe den verschachtelten Notion-API-Body (Titel, Status, Priorität, Person, Datum, Relation) und mappt Owner-Namen auf Notion-User-IDs. Das ist bewusst Code: der native Notion-Node kann Relation + Person + Status + Datum nicht zuverlässig in einem Schritt setzen. **Hier die `{{REPLACE_ME_...}}` setzen.**\n**Create Task Page** (HTTP Request) schickt den Body an `POST /v1/pages` mit deinem `Notion API`-Credential.",
+        "height": 170,
+        "width": 520,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-out",
+      "name": "Output",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1420,
+        560
+      ],
+      "parameters": {
+        "content": "## Output (nativ)\n**Collect Created** (Aggregate) sammelt die angelegten Seiten, **Format Output** (Edit Fields) gibt `{output, model, task_count}` an den Dispatcher zurück. Keine Code-Node mehr.",
+        "height": 170,
+        "width": 240,
+        "color": 5
+      }
+    }
+  ],
+  "connections": {
+    "Webhook (test)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called by Dispatcher": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Tasks",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tasks": {
+      "main": [
+        [
+          {
+            "node": "Parse Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Tasks": {
+      "main": [
+        [
+          {
+            "node": "Create Task Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Task Page": {
+      "main": [
+        [
+          {
+            "node": "Collect Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Created": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

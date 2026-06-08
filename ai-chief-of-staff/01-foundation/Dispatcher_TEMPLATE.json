@@ -1,0 +1,1001 @@
+{
+  "name": "AI Chief of Staff — Dispatcher_TEMPLATE",
+  "nodes": [
+    {
+      "id": "wh",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "path": "acos-dispatch",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth"
+      }
+    },
+    {
+      "id": "val",
+      "name": "Validate & Init",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "v-mid",
+              "name": "meeting_id",
+              "type": "string",
+              "value": "={{ ($json.body?.meeting_id ?? '').toString().trim() }}"
+            },
+            {
+              "id": "v-act",
+              "name": "action",
+              "type": "string",
+              "value": "={{ ($json.body?.action ?? '').toString().trim() }}"
+            },
+            {
+              "id": "v-ten",
+              "name": "tenant_id",
+              "type": "string",
+              "value": "{{REPLACE_ME_TENANT_ID}}"
+            },
+            {
+              "id": "v-val",
+              "name": "valid",
+              "type": "boolean",
+              "value": "={{ ($json.body?.meeting_id ?? '').toString().trim() !== '' && ['pro_followup','coaching_advice'].includes(($json.body?.action ?? '').toString().trim()) }}"
+            },
+            {
+              "id": "v-err",
+              "name": "error",
+              "type": "string",
+              "value": "={{ ($json.body?.meeting_id ?? '').toString().trim() === '' ? 'meeting_id is required' : 'action must be one of the allowed actions (siehe Array im valid-Feld dieser Node)' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ifv",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "v1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ff",
+      "name": "Fetch Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        700,
+        -120
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 4000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"query Transcript($transcriptId: String!) { transcript(id: $transcriptId) { id title sentences { speaker_name text } } }\", variables: { transcriptId: $json.meeting_id } }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "btt",
+      "name": "Build Transcript Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        940,
+        -120
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b-found",
+              "name": "found",
+              "type": "boolean",
+              "value": "={{ ($json.data?.transcript?.sentences?.length ?? 0) > 0 }}"
+            },
+            {
+              "id": "b-tr",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ ($json.data?.transcript?.sentences?.length ?? 0) > 0 ? (($json.data.transcript.title ? '# ' + $json.data.transcript.title + '\\n\\n' : '') + $json.data.transcript.sentences.map(s => (s.speaker_name || 'Speaker') + ': ' + (s.text || '')).join('\\n')) : '' }}"
+            },
+            {
+              "id": "b-mid",
+              "name": "meeting_id",
+              "type": "string",
+              "value": "={{ $('Validate & Init').item.json.meeting_id }}"
+            },
+            {
+              "id": "b-act",
+              "name": "action",
+              "type": "string",
+              "value": "={{ $('Validate & Init').item.json.action }}"
+            },
+            {
+              "id": "b-ten",
+              "name": "tenant_id",
+              "type": "string",
+              "value": "={{ $('Validate & Init').item.json.tenant_id }}"
+            },
+            {
+              "id": "b-tt",
+              "name": "transcript_title",
+              "type": "string",
+              "value": "={{ $json.data?.transcript?.title ?? '' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "iffound",
+      "name": "Transcript Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1160,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1",
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "insrun",
+      "name": "Insert Runs Row",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        -200
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "create",
+        "tableId": "runs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "tenant_id",
+              "fieldValue": "={{ $json.tenant_id }}"
+            },
+            {
+              "fieldId": "meeting_id",
+              "fieldValue": "={{ $json.meeting_id }}"
+            },
+            {
+              "fieldId": "action",
+              "fieldValue": "={{ $json.action }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "running"
+            },
+            {
+              "fieldId": "transcript",
+              "fieldValue": "={{ $json.transcript }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prep",
+      "name": "Prepare Sub-WF Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1620,
+        -200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "transcript",
+              "value": "={{ $json.transcript }}",
+              "type": "string"
+            },
+            {
+              "id": "p2",
+              "name": "meeting_id",
+              "value": "={{ $json.meeting_id }}",
+              "type": "string"
+            },
+            {
+              "id": "p3",
+              "name": "run_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "sw",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1840,
+        -200
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $('Validate & Init').item.json.action }}",
+                    "rightValue": "pro_followup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pro_followup"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $('Validate & Init').item.json.action }}",
+                    "rightValue": "coaching_advice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "coaching_advice"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "subpf",
+      "name": "Run Pro FollowUp",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2080,
+        -340
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "{{REPLACE_ME_PRO_FOLLOWUP_WORKFLOW_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "subca",
+      "name": "Run Coaching Advice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2080,
+        -200
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "{{REPLACE_ME_COACHING_ADVICE_WORKFLOW_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "updrun",
+      "name": "Update Runs Row",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2360,
+        -200
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "runs",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Prepare Sub-WF Input').item.json.run_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "success"
+            },
+            {
+              "fieldId": "output",
+              "fieldValue": "={{ $json.output }}"
+            },
+            {
+              "fieldId": "model",
+              "fieldValue": "={{ $json.model }}"
+            },
+            {
+              "fieldId": "finished_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "respok",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2580,
+        -200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"run_id\": $json.id, \"status\": $json.status, \"action\": $json.action, \"output\": $json.output } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "respinv",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        160
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"stage\": \"validation\", \"error\": $json.error } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "failfetch",
+      "name": "Build Failure: Fetch",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        940,
+        140
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "x1",
+              "name": "tenant_id",
+              "value": "={{ $('Validate & Init').item.json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "x2",
+              "name": "meeting_id",
+              "value": "={{ $('Validate & Init').item.json.meeting_id }}",
+              "type": "string"
+            },
+            {
+              "id": "x3",
+              "name": "action",
+              "value": "={{ $('Validate & Init').item.json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "x4",
+              "name": "error",
+              "value": "=Fireflies transcript fetch failed for meeting_id {{ $('Validate & Init').item.json.meeting_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "failnf",
+      "name": "Build Failure: Not Found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1400,
+        60
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "y1",
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "y2",
+              "name": "meeting_id",
+              "value": "={{ $json.meeting_id }}",
+              "type": "string"
+            },
+            {
+              "id": "y3",
+              "name": "action",
+              "value": "={{ $json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "y4",
+              "name": "error",
+              "value": "=No Fireflies transcript found for meeting_id {{ $json.meeting_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "insfail",
+      "name": "Insert Failed Run",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        140
+      ],
+      "parameters": {
+        "operation": "create",
+        "tableId": "runs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "tenant_id",
+              "fieldValue": "={{ $json.tenant_id }}"
+            },
+            {
+              "fieldId": "meeting_id",
+              "fieldValue": "={{ $json.meeting_id }}"
+            },
+            {
+              "fieldId": "action",
+              "fieldValue": "={{ $json.action }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            },
+            {
+              "fieldId": "error",
+              "fieldValue": "={{ $json.error }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "markfail",
+      "name": "Mark Run Failed",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2360,
+        60
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "runs",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Prepare Sub-WF Input').item.json.run_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            },
+            {
+              "fieldId": "error",
+              "fieldValue": "={{ 'Action sub-workflow failed: ' + ($json.error?.message || 'unknown error') }}"
+            },
+            {
+              "fieldId": "finished_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "resperr",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2580,
+        60
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"run_id\": ($json.id ?? null), \"status\": \"failed\", \"action\": ($json.action ?? null), \"error\": ($json.error?.message ?? $json.error ?? \"Run failed\") } }}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    },
+    {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -540
+      ],
+      "parameters": {
+        "content": "## AI Chief of Staff — Dispatcher_TEMPLATE\n\n**Was dieser Workflow tut.** Empfängt einen Webhook `{meeting_id, action}` mit dem `x-acos-secret` Header, holt das Transkript bei Fireflies, schreibt eine Zeile in die `runs`-Tabelle, ruft den passenden Sub-Workflow (Pro FollowUp oder Coaching Advice), markiert die Zeile als success/failed, antwortet dem Caller.\n\n**Was du einsetzen musst** (markiert mit `{{REPLACE_ME_…}}`):\n1. **Credentials** — alle Nodes ohne Auth importieren ohne Warnung, du legst sie in n8n → Credentials an: Header Auth für `x-acos-secret`, Header Auth für Fireflies (Header `Authorization`, Wert `Bearer YOUR_KEY`), Supabase API (Host = Projekt-URL, service-role key).\n2. **TENANT_ID** in der `Validate & Init`-Node — eine UUID v4, generiere mit `uuidgen`.\n3. **Workflow-IDs** in `Run Pro FollowUp` und `Run Coaching Advice` — die IDs deiner importierten `ProFollowUp_TEMPLATE` + `CoachingAdvice_TEMPLATE` Sub-Workflows.\n\n**Reihenfolge zum Aufsetzen.** Importiere zuerst die zwei Sub-Workflows, dann diesen Dispatcher. Aktiviere alle drei. Vom Notion-Button (siehe A1-Artikel) ruft du den Webhook dieses Workflows.\n\n> [!success] Komplett native\n> Dieser Workflow nutzt ausschließlich native n8n-Nodes. `Validate & Init` und `Build Transcript Text` sind **Edit Fields (Set)**-Nodes, keine Code-Nodes.",
+        "height": 260,
+        "width": 760,
+        "color": 6
+      }
+    },
+    {
+      "id": "sticky-1-trigger",
+      "name": "1. Trigger + Validate",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -260
+      ],
+      "parameters": {
+        "content": "## 1. Trigger + Validate\n**Webhook** empfängt POST mit `{meeting_id, action}` und `x-acos-secret` Header. **Validate & Init** prüft die Eingabe, vergibt `tenant_id`. Bei Fehler → `Respond Invalid`.",
+        "height": 80,
+        "width": 700,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-2-fetch",
+      "name": "2. Fetch Transcript",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -260
+      ],
+      "parameters": {
+        "content": "## 2. Fetch Transcript (Fireflies)\n**Fetch Transcript** ruft die Fireflies GraphQL-API mit dem `meeting_id`. **Build Transcript Text** baut den lesbaren `speaker_name: text`-String, **Transcript Found?** verzweigt bei leerem Ergebnis in die Fehlerstrecke.",
+        "height": 80,
+        "width": 700,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-3-log-route",
+      "name": "3. Log + Route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1370,
+        -340
+      ],
+      "parameters": {
+        "content": "## 3. Log Run + Route\n**Insert Runs Row** schreibt eine neue Zeile in `runs` (Status: `running`). **Prepare Sub-WF Input** packt das Input-Bundle. **Route by Action** verzweigt nach `action`-Wert (zwei Cases heute, erweiterbar).",
+        "height": 80,
+        "width": 460,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-4-call",
+      "name": "4. Call Sub-Workflows",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2040,
+        -480
+      ],
+      "parameters": {
+        "content": "## 4. Call Sub-Workflows\n**Run Pro FollowUp** und **Run Coaching Advice**. Beide Workflow-IDs müssen ersetzt werden, sobald du die Sub-Workflow-Templates importiert hast.",
+        "height": 80,
+        "width": 280,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-5-finalize",
+      "name": "5. Finalize + Respond",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2330,
+        -340
+      ],
+      "parameters": {
+        "content": "## 5. Finalize + Respond\n**Update Runs Row** setzt die Zeile auf `status=success` mit Output und Modell. **Respond Success** schickt die Antwort an den Webhook-Caller zurück.",
+        "height": 80,
+        "width": 460,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-error",
+      "name": "Error Path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        680,
+        240
+      ],
+      "parameters": {
+        "content": "## Error Path\nValidation-, Fetch- und Transcript-Fehler fließen in `runs` als `status=failed` mit `error_message`, dann strukturierte Fehlerantwort an den Caller. Keine stillen Ausfälle.",
+        "height": 80,
+        "width": 1920,
+        "color": 3
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Init": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Transcript": {
+      "main": [
+        [
+          {
+            "node": "Build Transcript Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Failure: Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transcript Text": {
+      "main": [
+        [
+          {
+            "node": "Transcript Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript Found?": {
+      "main": [
+        [
+          {
+            "node": "Insert Runs Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Failure: Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Runs Row": {
+      "main": [
+        [
+          {
+            "node": "Prepare Sub-WF Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sub-WF Input": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Run Pro FollowUp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run Coaching Advice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Pro FollowUp": {
+      "main": [
+        [
+          {
+            "node": "Update Runs Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Run Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Coaching Advice": {
+      "main": [
+        [
+          {
+            "node": "Update Runs Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Run Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Runs Row": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure: Fetch": {
+      "main": [
+        [
+          {
+            "node": "Insert Failed Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure: Not Found": {
+      "main": [
+        [
+          {
+            "node": "Insert Failed Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Failed Run": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
